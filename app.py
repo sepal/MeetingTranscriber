@@ -6,6 +6,7 @@ import torch
 from pyannote.audio import Pipeline
 from pydub import AudioSegment
 from mimetypes import MimeTypes
+import whisper
 
 load_dotenv()
 
@@ -13,6 +14,7 @@ hg_token = os.getenv("HG_ACCESS_TOKEN")
 
 if hg_token != None:
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hg_token)
+    whisper_ml = whisper.load_model("base")
 else:
     print('''No hugging face access token set. 
 You need to set it via an .env or environment variable HG_ACCESS_TOKEN''')
@@ -52,15 +54,25 @@ def split_audio(audio_file: tuple[int, np.array], segments):
     pass
 
 
-def transcribe(audio_file: tuple[int, np.array]) -> str:
-    segments = diarization(audio_file)
-    segments = combine_segments(segments)
-    return segments
+def prep_audio(audio_segment):
+    """
+    This function preps a pydub AudioSegment for a ml model.
+
+    Both pyannote audio and whisper require mono audio with a 16khz rate as float32.
+    """
+    audio_data = audio_segment.set_channels(1).set_frame_rate(16000)
+    return np.array(audio_data.get_array_of_samples()).flatten().astype(np.float32) / 32768.0
+
+def transcribe(audio_file: str) -> str:
+    audio = AudioSegment.from_file(audio_file)
+    
+    audio_data = prep_audio(audio)
+    return whisper_ml.transcribe(audio_data)['text']
 
 
 demo = gr.Interface(
     fn=transcribe,
-    inputs=gr.Audio(type="numpy"),
+    inputs=gr.Audio(type="filepath"),
     outputs="text",
 )
 
