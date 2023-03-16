@@ -2,11 +2,13 @@ import os
 from dotenv import load_dotenv
 import gradio as gr
 import numpy as np
+import pandas as pd
 import torch
 from pyannote.audio import Pipeline
 from pydub import AudioSegment
 from mimetypes import MimeTypes
 import whisper
+import tempfile
 
 load_dotenv()
 
@@ -21,37 +23,20 @@ You need to set it via an .env or environment variable HG_ACCESS_TOKEN''')
     exit(1)
 
 
-def diarization(audio_file: tuple[int, np.array]) -> np.array:
+def diarization(audio) -> np.array:
     """
-    Receives a tuple with the sample rate and audio data and returns the
-    a numpy array containing the audio segments, track names and speakers for 
-    each segment.
+    Receives a pydub AudioSegment and returns an numpy array with all segments.
     """
-    waveform = torch.tensor(audio_file[1].astype(np.float32, order='C')).reshape(1,-1)
-    audio_data = {
-        "waveform": waveform,
-        "sample_rate": audio_file[0]
-    }
+    audio.export("/tmp/dz.wav", format="wav")
+    diarization = pipeline("/tmp/dz.wav")
+    return pd.DataFrame(list(diarization.itertracks(yield_label=True)),columns=["Segment","Trackname", "Speaker"])
 
-    diarization = pipeline(audio_data)
-    
-    return np.array(list(diarization.itertracks(yield_label=True)))
 
-def combine_segments(segments: np.array) -> np.array:
-    new_arr = []
-    prev_label = None
-    for row in segments:
-        if prev_label is None or row[2] != prev_label:
-            new_arr.append(row)
-            prev_label = row[2]
-        else:
-            new_arr[-1][0] = new_arr[-1][0] | row[0]
-            new_arr[-1][1] = new_arr[-1][1]
-            new_arr[-1][2] = prev_label
-    return np.array(new_arr)
-
-def split_audio(audio_file: tuple[int, np.array], segments):
-    pass
+def combine_segments(df):
+    grouped_df = df.groupby((df['Speaker'] != df['Speaker'].shift()).cumsum())
+    return grouped_df.agg({'Segment': lambda x: x.min() | x.max(), 
+                            'Trackname': 'first',
+                            'Speaker': 'first'})
 
 
 def prep_audio(audio_segment):
@@ -63,11 +48,37 @@ def prep_audio(audio_segment):
     audio_data = audio_segment.set_channels(1).set_frame_rate(16000)
     return np.array(audio_data.get_array_of_samples()).flatten().astype(np.float32) / 32768.0
 
+def transcribe_row(row, audio):
+    segment = audio[row.start_ms:row.end_ms]
+    data = prep_audio(segment)
+    return whisper_ml.transcribe(data)['text']
+
+
+def combine_transcription(segments):
+    text = ""
+    for _,row in segments.iterrows():
+        text += f"[{row.Speaker}]: {row.text}\n"
+    
+    return text
+
 def transcribe(audio_file: str) -> str:
     audio = AudioSegment.from_file(audio_file)
-    
-    audio_data = prep_audio(audio)
-    return whisper_ml.transcribe(audio_data)['text']
+    print("diarization")
+    df = diarization(audio)
+
+    print("combining segments")
+    df = combine_segments(df)
+
+    df['start'] = df.Segment.apply(lambda x: x.start)
+    df['end'] = df.Segment.apply(lambda x: x.end)
+
+    df['start_ms'] = df.Segment.apply(lambda x: int(x.start*1000))
+    df['end_ms'] = df.Segment.apply(lambda x: int(x.end*1000))
+
+    print("transcribing segments")
+    df['text'] = df.apply(lambda x: transcribe_row(x, audio), axis=1)
+
+    return combine_transcription(df)
 
 
 demo = gr.Interface(
