@@ -13,11 +13,9 @@ import tempfile
 load_dotenv()
 
 hg_token = os.getenv("HG_ACCESS_TOKEN") 
+open_api_key = os.getenv("OPENAI_API_KEY")
 
-if hg_token != None:
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hg_token)
-    whisper_ml = whisper.load_model("base")
-else:
+if hg_token == None:
     print('''No hugging face access token set. 
 You need to set it via an .env or environment variable HG_ACCESS_TOKEN''')
     exit(1)
@@ -27,6 +25,7 @@ def diarization(audio) -> np.array:
     """
     Receives a pydub AudioSegment and returns an numpy array with all segments.
     """
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hg_token)
     audio.export("/tmp/dz.wav", format="wav")
     diarization = pipeline("/tmp/dz.wav")
     return pd.DataFrame(list(diarization.itertracks(yield_label=True)),columns=["Segment","Trackname", "Speaker"])
@@ -50,8 +49,24 @@ def prep_audio(audio_segment):
 
 def transcribe_row(row, audio):
     segment = audio[row.start_ms:row.end_ms]
-    data = prep_audio(segment)
-    return whisper_ml.transcribe(data)['text']
+    if open_api_key == None:
+        whisper_ml = whisper.load_model("base")
+        data = prep_audio(segment)
+        return whisper_ml.transcribe(data)['text']
+    else:
+        print("Using openai API")
+        # the open ai whisper AI only accepts audio files with a length of at 
+        # least 0.1 seconds.
+        if row['end_ms'] - row['start_ms'] < 100:
+            return ""
+        import openai
+        import tempfile
+        temp_file = f"/tmp/{row['Trackname']}.mp3"
+        segment.export(temp_file, format="mp3")
+        print(temp_file)
+        audio_file = open(temp_file, "rb")
+        return openai.Audio.translate("whisper-1", audio_file)['text']
+
 
 
 def combine_transcription(segments):
