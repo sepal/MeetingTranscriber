@@ -35,10 +35,31 @@ def diarization(audio_file: tuple[int, np.array]) -> np.array:
     
     return np.array(list(diarization.itertracks(yield_label=True)))
 
+def combine_segments(segments: np.array) -> np.array:
+    new_arr = []
+    prev_label = None
+    for row in segments:
+        if prev_label is None or row[2] != prev_label:
+            new_arr.append(row)
+            prev_label = row[2]
+        else:
+            new_arr[-1][0] = new_arr[-1][0] | row[0]
+            new_arr[-1][1] = new_arr[-1][1]
+            new_arr[-1][2] = prev_label
+    return np.array(new_arr)
+
+def split_audio(audio_file: tuple[int, np.array], segments):
+    pass
+
+
+def transcribe(audio_file: tuple[int, np.array]) -> str:
+    segments = diarization(audio_file)
+    segments = combine_segments(segments)
+    return segments
 
 
 demo = gr.Interface(
-    fn=diarization,
+    fn=transcribe,
     inputs=gr.Audio(type="numpy"),
     outputs="text",
 )
