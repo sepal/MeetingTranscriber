@@ -1,5 +1,6 @@
 gradio==3.21.0
 openai-whisper==20230314
+pydub==0.25.1
 python-dotenv==1.0.0
 pyannote.audio==2.1.1
 torch==1.13.1
