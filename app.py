@@ -50,7 +50,7 @@ def prep_audio(audio_segment):
 def transcribe_row(row, audio):
     segment = audio[row.start_ms:row.end_ms]
     if open_api_key == None:
-        whisper_ml = whisper.load_model("base")
+        whisper_ml = whisper.load_model("large")
         data = prep_audio(segment)
         return whisper_ml.transcribe(data)['text']
     else:
